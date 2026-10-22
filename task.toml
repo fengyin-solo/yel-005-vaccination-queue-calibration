@@ -1,0 +1,27 @@
+schema_version = "1.3"
+
+[task]
+name = "local/vaccination-queue-calibration"
+authors = [{ name = "fengyin" }]
+description = "Recover the smallest deterministic service capacity consistent with observed clinic queues, then forecast the remaining backlog."
+keywords = ["simulation", "queueing", "calibration", "forecast"]
+
+[agent]
+timeout_sec = 3600
+
+[environment]
+build_timeout_sec = 600
+cpus = 2
+memory_mb = 2048
+storage_mb = 4096
+gpus = 0
+allow_internet = true
+
+[verifier]
+timeout_sec = 600
+
+[metadata]
+difficulty = "hard"
+category = "simulation"
+tags = ["queue-simulation", "inverse-calibration", "forecast", "canonical-json"]
+expert_time_estimate = "65m"

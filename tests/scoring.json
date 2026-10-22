@@ -1,0 +1,73 @@
+{
+  "gate_tests": [
+    "test_outputs.py::test_top_level_keys_are_exact",
+    "test_outputs.py::test_checkpoint_keys_are_exact",
+    "test_outputs.py::test_duplicate_json_key_is_refused",
+    "test_outputs.py::test_too_short_arrival_series_is_refused",
+    "test_outputs.py::test_system_identifier_is_strict",
+    "test_outputs.py::test_boolean_arrival_is_refused"
+  ],
+  "schema_version": 1,
+  "tests": {
+    "test_outputs.py::test_absent_parent_is_io_failure": {
+      "priority": "recovery",
+      "rationale": "absent parent is io failure；这验证失败、重跑或恢复不变量，失败会造成旧数据和台账不一致。",
+      "weight": 0.068
+    },
+    "test_outputs.py::test_backlog_series_follows_recurrence": {
+      "priority": "core",
+      "rationale": "backlog series follows recurrence；这是任务的主交付路径，失败意味着核心业务结果不可用。",
+      "weight": 0.2
+    },
+    "test_outputs.py::test_bad_input_preserves_old_result": {
+      "priority": "recovery",
+      "rationale": "bad input preserves old result；这验证失败、重跑或恢复不变量，失败会造成旧数据和台账不一致。",
+      "weight": 0.068
+    },
+    "test_outputs.py::test_checkpoints_must_be_strictly_increasing": {
+      "priority": "supporting",
+      "rationale": "checkpoints must be strictly increasing；这补充验证外围业务约束，失败会降低交付完整性和可运维性。",
+      "weight": 0.028
+    },
+    "test_outputs.py::test_final_and_peak_backlog_match_series": {
+      "priority": "core",
+      "rationale": "final and peak backlog match series；这是任务的主交付路径，失败意味着核心业务结果不可用。",
+      "weight": 0.2
+    },
+    "test_outputs.py::test_negative_initial_backlog_is_refused": {
+      "priority": "boundary",
+      "rationale": "negative initial backlog is refused；这验证公开边界和拒收口径，失败会产生越界输入或错误放行。",
+      "weight": 0.051
+    },
+    "test_outputs.py::test_no_capacity_under_ceiling_is_refused": {
+      "priority": "boundary",
+      "rationale": "no capacity under ceiling is refused；这验证公开边界和拒收口径，失败会产生越界输入或错误放行。",
+      "weight": 0.051
+    },
+    "test_outputs.py::test_repeat_run_is_byte_identical": {
+      "priority": "recovery",
+      "rationale": "repeat run is byte identical；这验证失败、重跑或恢复不变量，失败会造成旧数据和台账不一致。",
+      "weight": 0.067
+    },
+    "test_outputs.py::test_result_has_compact_fixed_order": {
+      "priority": "schema",
+      "rationale": "result has compact fixed order；这验证结构、类型或序列化外观，失败会使下游无法稳定消费结果。",
+      "weight": 0.039
+    },
+    "test_outputs.py::test_smallest_consistent_capacity_is_selected": {
+      "priority": "core",
+      "rationale": "smallest consistent capacity is selected；这是任务的主交付路径，失败意味着核心业务结果不可用。",
+      "weight": 0.2
+    },
+    "test_outputs.py::test_success_is_quiet": {
+      "priority": "supporting",
+      "rationale": "success is quiet；这补充验证外围业务约束，失败会降低交付完整性和可运维性。",
+      "weight": 0.028
+    }
+  },
+  "weight_policy": {
+    "basis": "business_priority",
+    "core_min_share": 0.5,
+    "version": 1
+  }
+}
