@@ -1,10 +1,10 @@
 schema_version = "1.3"
 
 [task]
-name = "local/vaccination-queue-calibration"
+name = "local/anonymous-clinic-log-matching"
 authors = [{ name = "fengyin" }]
-description = "Recover the smallest deterministic service capacity consistent with observed clinic queues, then forecast the remaining backlog."
-keywords = ["simulation", "queueing", "calibration", "forecast"]
+description = "Match anonymous clinic queue logs to arrival profiles and recover the shared service capacity from all observations simultaneously."
+keywords = ["simulation", "queueing", "inverse-matching", "calibration"]
 
 [agent]
 timeout_sec = 3600
@@ -23,5 +23,5 @@ timeout_sec = 600
 [metadata]
 difficulty = "hard"
 category = "simulation"
-tags = ["queue-simulation", "inverse-calibration", "forecast", "canonical-json"]
-expert_time_estimate = "65m"
+tags = ["queue-simulation", "inverse-matching", "state-recovery", "canonical-json"]
+expert_time_estimate = "55m"

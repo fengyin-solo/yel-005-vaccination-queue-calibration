@@ -1,67 +1,153 @@
 {
   "gate_tests": [
     "test_outputs.py::test_top_level_keys_are_exact",
-    "test_outputs.py::test_checkpoint_keys_are_exact",
+    "test_outputs.py::test_profile_keys_are_exact",
+    "test_outputs.py::test_batch_keys_are_exact",
+    "test_outputs.py::test_missing_required_key_is_refused",
     "test_outputs.py::test_duplicate_json_key_is_refused",
-    "test_outputs.py::test_too_short_arrival_series_is_refused",
-    "test_outputs.py::test_system_identifier_is_strict",
+    "test_outputs.py::test_profiles_and_batches_must_have_equal_lengths",
     "test_outputs.py::test_boolean_arrival_is_refused"
   ],
   "schema_version": 1,
   "tests": {
     "test_outputs.py::test_absent_parent_is_io_failure": {
       "priority": "recovery",
-      "rationale": "absent parent is io failure；这验证失败、重跑或恢复不变量，失败会造成旧数据和台账不一致。",
-      "weight": 0.068
+      "rationale": "absent parent is IO failure；这验证失败、重跑或恢复不变量，失败会造成旧数据和台账不一致。",
+      "weight": 0.038
+    },
+    "test_outputs.py::test_ambiguous_pairing_is_refused": {
+      "priority": "core",
+      "rationale": "ambiguous pairing is refused；这是任务的主交付路径，失败意味着核心业务结果不可用。",
+      "weight": 0.047
+    },
+    "test_outputs.py::test_assignment_keys_are_exact": {
+      "priority": "schema",
+      "rationale": "result has compact fixed order；这验证结构、类型或序列化外观，失败会使下游无法稳定消费结果。",
+      "weight": 0.022
+    },
+    "test_outputs.py::test_backlog_series_are_integers": {
+      "priority": "supporting",
+      "rationale": "assignment and checkpoint shapes are exact；这补充验证外围业务约束，失败会降低交付完整性和可运维性。",
+      "weight": 0.016
     },
     "test_outputs.py::test_backlog_series_follows_recurrence": {
       "priority": "core",
       "rationale": "backlog series follows recurrence；这是任务的主交付路径，失败意味着核心业务结果不可用。",
-      "weight": 0.2
+      "weight": 0.047
     },
     "test_outputs.py::test_bad_input_preserves_old_result": {
-      "priority": "recovery",
-      "rationale": "bad input preserves old result；这验证失败、重跑或恢复不变量，失败会造成旧数据和台账不一致。",
-      "weight": 0.068
+      "priority": "core",
+      "rationale": "bad input preserves old result；这是任务的主交付路径，失败意味着核心业务结果不可用。",
+      "weight": 0.047
     },
-    "test_outputs.py::test_checkpoints_must_be_strictly_increasing": {
-      "priority": "supporting",
-      "rationale": "checkpoints must be strictly increasing；这补充验证外围业务约束，失败会降低交付完整性和可运维性。",
+    "test_outputs.py::test_capacity_ceiling_below_limit_is_refused": {
+      "priority": "boundary",
+      "rationale": "capacity below public ceiling is refused；这验证公开边界和拒收口径，失败会产生越界输入或错误放行。",
+      "weight": 0.029
+    },
+    "test_outputs.py::test_capacity_ceiling_boundary": {
+      "priority": "boundary",
+      "rationale": "capacity ceiling boundary；这验证公开边界和拒收口径，失败会产生越界输入或错误放行。",
+      "weight": 0.029
+    },
+    "test_outputs.py::test_capacity_ceiling_lower_bound_is_not_bad_input": {
+      "priority": "boundary",
+      "rationale": "验证公开下限 1 能通过结构校验并进入容量搜索，避免把合法下限误判为坏输入。",
+      "weight": 0.016
+    },
+    "test_outputs.py::test_checkpoint_minutes_are_ordered": {
+      "priority": "schema",
+      "rationale": "checkpoint minutes are ordered；这验证结构、类型或序列化外观，失败会使下游无法稳定消费结果。",
+      "weight": 0.022
+    },
+    "test_outputs.py::test_checkpoint_pair_keys_are_exact": {
+      "priority": "schema",
+      "rationale": "checkpoint pairs have exact nested keys；这验证结构、类型或序列化外观，失败会使下游无法稳定消费结果。",
+      "weight": 0.022
+    },
+    "test_outputs.py::test_checkpoint_values_are_reassociated": {
+      "priority": "core",
+      "rationale": "checkpoint values are reassociated；这是任务的主交付路径，失败意味着核心业务结果不可用。",
+      "weight": 0.047
+    },
+    "test_outputs.py::test_duplicate_profile_identifier_is_refused": {
+      "priority": "boundary",
+      "rationale": "duplicate profile identifier is refused；这验证公开边界和拒收口径，失败会产生越界输入或错误放行。",
+      "weight": 0.029
+    },
+    "test_outputs.py::test_final_and_peak_match_series": {
+      "priority": "core",
+      "rationale": "final and peak match series；这是任务的主交付路径，失败意味着核心业务结果不可用。",
+      "weight": 0.055
+    },
+    "test_outputs.py::test_initial_backlog_is_recovered": {
+      "priority": "core",
+      "rationale": "initial backlog is recovered；这是任务的主交付路径，失败意味着核心业务结果不可用。",
+      "weight": 0.055
+    },
+    "test_outputs.py::test_joint_assignment_recovers_capacity": {
+      "priority": "core",
+      "rationale": "joint assignment recovers capacity；这是任务的主交付路径，失败意味着核心业务结果不可用。",
+      "weight": 0.054
+    },
+    "test_outputs.py::test_maximum_shape_runs_without_capacity_scan": {
+      "priority": "core",
+      "rationale": "maximum shape runs without capacity scan；这是任务的主交付路径，失败意味着核心业务结果不可用。",
+      "weight": 0.054
+    },
+    "test_outputs.py::test_maximum_system_label_accepts_visible_space": {
+      "priority": "boundary",
+      "rationale": "test maximum system label accepts visible space；这验证公开边界和拒收口径，失败会产生越界输入或错误放行。",
+      "weight": 0.029
+    },
+    "test_outputs.py::test_nonpositive_checkpoint_backlog_is_refused": {
+      "priority": "boundary",
+      "rationale": "nonpositive checkpoint backlog is refused；这验证公开边界和拒收口径，失败会产生越界输入或错误放行。",
       "weight": 0.028
     },
-    "test_outputs.py::test_final_and_peak_backlog_match_series": {
-      "priority": "core",
-      "rationale": "final and peak backlog match series；这是任务的主交付路径，失败意味着核心业务结果不可用。",
-      "weight": 0.2
+    "test_outputs.py::test_publish_failure_leaves_no_temporary": {
+      "priority": "recovery",
+      "rationale": "staging failure leaves no residue；这验证失败、重跑或恢复不变量，失败会造成旧数据和台账不一致。",
+      "weight": 0.038
     },
-    "test_outputs.py::test_negative_initial_backlog_is_refused": {
-      "priority": "boundary",
-      "rationale": "negative initial backlog is refused；这验证公开边界和拒收口径，失败会产生越界输入或错误放行。",
-      "weight": 0.051
-    },
-    "test_outputs.py::test_no_capacity_under_ceiling_is_refused": {
-      "priority": "boundary",
-      "rationale": "no capacity under ceiling is refused；这验证公开边界和拒收口径，失败会产生越界输入或错误放行。",
-      "weight": 0.051
+    "test_outputs.py::test_publish_failure_preserves_old_report": {
+      "priority": "recovery",
+      "rationale": "publish failure preserves old report；这验证失败、重跑或恢复不变量，失败会造成旧数据和台账不一致。",
+      "weight": 0.038
     },
     "test_outputs.py::test_repeat_run_is_byte_identical": {
-      "priority": "recovery",
-      "rationale": "repeat run is byte identical；这验证失败、重跑或恢复不变量，失败会造成旧数据和台账不一致。",
-      "weight": 0.067
+      "priority": "core",
+      "rationale": "repeat run is byte identical；这是任务的主交付路径，失败意味着核心业务结果不可用。",
+      "weight": 0.054
     },
     "test_outputs.py::test_result_has_compact_fixed_order": {
-      "priority": "schema",
-      "rationale": "result has compact fixed order；这验证结构、类型或序列化外观，失败会使下游无法稳定消费结果。",
-      "weight": 0.039
-    },
-    "test_outputs.py::test_smallest_consistent_capacity_is_selected": {
       "priority": "core",
-      "rationale": "smallest consistent capacity is selected；这是任务的主交付路径，失败意味着核心业务结果不可用。",
-      "weight": 0.2
+      "rationale": "success report has one compact line；这是任务的主交付路径，失败意味着核心业务结果不可用。",
+      "weight": 0.054
+    },
+    "test_outputs.py::test_sampled_minutes_must_be_strictly_increasing": {
+      "priority": "supporting",
+      "rationale": "sampled minutes are strictly increasing；这补充验证外围业务约束，失败会降低交付完整性和可运维性。",
+      "weight": 0.016
+    },
+    "test_outputs.py::test_sampled_minutes_count_and_range_are_strict": {
+      "priority": "boundary",
+      "rationale": "验证快照位置数量及曲线范围下限、上限，避免越界分钟或过短观测进入反演。",
+      "weight": 0.016
+    },
+    "test_outputs.py::test_smallest_feasible_capacity_is_selected": {
+      "priority": "core",
+      "rationale": "smallest feasible capacity is selected；这是任务的主交付路径，失败意味着核心业务结果不可用。",
+      "weight": 0.054
     },
     "test_outputs.py::test_success_is_quiet": {
       "priority": "supporting",
-      "rationale": "success is quiet；这补充验证外围业务约束，失败会降低交付完整性和可运维性。",
+      "rationale": "success output is quiet；这补充验证外围业务约束，失败会降低交付完整性和可运维性。",
+      "weight": 0.016
+    },
+    "test_outputs.py::test_too_short_arrival_series_is_refused": {
+      "priority": "boundary",
+      "rationale": "too short arrival series is refused；这验证公开边界和拒收口径，失败会产生越界输入或错误放行。",
       "weight": 0.028
     }
   },
