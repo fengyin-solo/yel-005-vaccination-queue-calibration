@@ -47,25 +47,25 @@ def invoke_candidate(path, *arguments, timeout=30):
         text=True,
         timeout=timeout,
     )
-CAPACITY = 17
-SAMPLES = [2, 5, 8, 11]
+CAPACITY = (17, 23)
+SWITCH = 7
+SAMPLES = [2, 5, 11]
 PROFILES = [
     ("WEST-17", [3, 7, 5, 11, 9, 4, 13, 6, 8, 12, 4, 3]),
     ("EAST-04", [5, 8, 3, 9, 12, 4, 10, 6, 7, 5, 8, 11]),
-    ("NORTH-31", [2, 4, 6, 8, 10, 3, 5, 7, 9, 11, 2, 4]),
-    ("SOUTH-08", [9, 6, 8, 4, 12, 5, 7, 3, 10, 6, 8, 4]),
-    ("MOBILE-12", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]),
 ]
-INITIALS = [200, 250, 300, 200, 350]
-BATCH_ORDER = [3, 0, 4, 1, 2]
-BATCH_IDS = ["B-731", "B-204", "B-889", "B-415", "B-602"]
+INITIALS = [200, 250]
+BATCH_ORDER = [1, 0]
+BATCH_IDS = ["B-731", "B-204"]
+DECOY_BATCH_IDS = ["B-900", "B-901"]
 
 
-def series(arrivals, capacity, initial):
+def series(arrivals, capacity, initial, switch_minute=SWITCH):
     backlog = initial
     output = []
-    for arrival in arrivals:
-        backlog = max(0, backlog + arrival - capacity)
+    for minute, arrival in enumerate(arrivals, 1):
+        service = capacity[0] if minute < switch_minute else capacity[1]
+        backlog = max(0, backlog + arrival - service)
         output.append(backlog)
     return output
 
@@ -75,7 +75,9 @@ def rendered_case(
     initials=None,
     order=None,
     capacity=CAPACITY,
+    switch_minute=SWITCH,
     samples=None,
+    samples_by_profile=None,
 ):
     if profiles is None:
         profiles = PROFILES
@@ -87,11 +89,30 @@ def rendered_case(
         samples = SAMPLES
     generated = []
     for arrivals in profiles:
-        generated.append(series(arrivals[1], capacity, initials[len(generated)]))
+        generated.append(
+            series(
+                arrivals[1],
+                capacity,
+                initials[len(generated)],
+                switch_minute,
+            )
+        )
     batches = []
     for position, profile_index in enumerate(order):
-        values = [generated[profile_index][minute - 1] for minute in samples]
-        permutation = [2, 4, 0, 5, 1, 3] if len(samples) == 6 else [2, 0, 3, 1]
+        selected_samples = (
+            samples_by_profile[profile_index]
+            if samples_by_profile is not None
+            else samples
+        )
+        values = [
+            generated[profile_index][minute - 1]
+            for minute in selected_samples
+        ]
+        permutation = (
+            [2, 4, 0, 5, 1, 3]
+            if len(selected_samples) == 6
+            else ([2, 0, 3, 1] if len(selected_samples) == 4 else [2, 0, 1])
+        )
         batches.append(
             {
                 "batch_id": (
@@ -99,14 +120,28 @@ def rendered_case(
                     if position < len(BATCH_IDS)
                     else f"B-{400 + position * 13:03d}"
                 ),
-                "sampled_minutes": list(samples),
+                "sampled_minutes": list(selected_samples),
                 "checkpoint_backlogs": [values[index] for index in permutation],
                 "closing_backlog": generated[profile_index][-1],
             }
         )
+    for position, batch_id in enumerate(DECOY_BATCH_IDS):
+        batches.append(
+            {
+                "batch_id": batch_id,
+                "sampled_minutes": [2, 5, 11],
+                "checkpoint_backlogs": [
+                    900_000_000 - position,
+                    800_000_000 - position,
+                    700_000_000 - position,
+                ],
+                "closing_backlog": 500_000_000 - position,
+            }
+        )
+    batches = [batches[0], batches[2], batches[1], batches[3]]
     return {
         "system_id": "MOBILE-CHECK-23",
-        "capacity_ceiling": capacity,
+        "capacity_ceiling": list(capacity),
         "profiles": [
             {"profile_id": identifier, "arrivals_per_min": list(arrivals)}
             for identifier, arrivals in profiles
@@ -161,25 +196,39 @@ def test_joint_assignment_recovers_capacity(tmp_path):
     """题面：「要在所有站点与日志之间求一个完整的一一配对。」"""
     result, _, output = invoke(tmp_path, rendered_case())
     document = read(output)
-    assert result.returncode == 0 and document["capacity_per_min"] == CAPACITY
+    assert result.returncode == 0 and document["capacity_regimes"] == {
+        "early": CAPACITY[0],
+        "late": CAPACITY[1],
+        "switch_minute": SWITCH,
+    }
     assert [item["profile_id"] for item in document["assignments"]] == sorted(
         identifier for identifier, _ in PROFILES
     )
     assert [item["batch_id"] for item in document["assignments"]] == [
-        "B-415",
-        "B-889",
-        "B-602",
         "B-731",
         "B-204",
     ]
 
 
 def test_smallest_feasible_capacity_is_selected(tmp_path):
-    """题面：「选择最小的候选能力」。"""
+    """题面：「排序后的第一项就是选定候选。」"""
     result, _, output = invoke(tmp_path, rendered_case(capacity=CAPACITY))
     document = read(output)
     assert result.returncode == 0
-    assert document["capacity_per_min"] == CAPACITY
+    assert document["capacity_regimes"]["early"] == CAPACITY[0]
+    assert document["capacity_regimes"]["late"] == CAPACITY[1]
+
+
+def test_candidate_tuple_uses_lexicographic_tiebreak(tmp_path):
+    """题面：「排序后的第一项就是选定候选。」"""
+    result, _, output = invoke(tmp_path, rendered_case())
+    document = read(output)
+    assert result.returncode == 0
+    assert document["capacity_regimes"] == {
+        "early": CAPACITY[0],
+        "late": CAPACITY[1],
+        "switch_minute": SWITCH,
+    }
 
 
 def test_initial_backlog_is_recovered(tmp_path):
@@ -189,9 +238,6 @@ def test_initial_backlog_is_recovered(tmp_path):
     assert result.returncode == 0
     assert [item["initial_backlog"] for item in document["assignments"]] == [
         250,
-        350,
-        300,
-        200,
         200,
     ]
 
@@ -200,7 +246,7 @@ def test_checkpoint_values_are_reassociated(tmp_path):
     """题面：「批次中的积压值没有保留与采样分钟的对应，必须从整批观测反推。」"""
     result, _, output = invoke(tmp_path, rendered_case())
     document = read(output)
-    expected = series(PROFILES[0][1], CAPACITY, INITIALS[0])
+    expected = series(PROFILES[0][1], CAPACITY, INITIALS[0], SWITCH)
     assert result.returncode == 0
     assert assignment(document, "WEST-17")["checkpoint_pairs"] == [
         {"minute": minute, "backlog": expected[minute - 1]} for minute in SAMPLES
@@ -214,12 +260,12 @@ def test_backlog_series_follows_recurrence(tmp_path):
     item = assignment(document, "EAST-04")
     assert result.returncode == 0
     assert item["backlog_series"] == series(
-        PROFILES[1][1], CAPACITY, INITIALS[1]
+        PROFILES[1][1], CAPACITY, INITIALS[1], SWITCH
     )
 
 
 def test_final_and_peak_match_series(tmp_path):
-    """题面：「末分钟等于 `closing_backlog`」。"""
+    """题面：「末次采样 `m` 到曲线末尾同样满足：」"""
     result, _, output = invoke(tmp_path, rendered_case())
     document = read(output)
     assert result.returncode == 0
@@ -231,20 +277,20 @@ def test_final_and_peak_match_series(tmp_path):
 
 
 def test_capacity_ceiling_boundary(tmp_path):
-    """题面：「选择最小的候选能力」，且上限是 1000000000 的整数。"""
+    """题面：「`capacity_ceiling` 是恰好两项的整数数组，依次约束早段和晚段服务能力。」"""
     accepted_document = rendered_case(capacity=CAPACITY)
-    accepted_document["capacity_ceiling"] = CAPACITY
+    accepted_document["capacity_ceiling"] = list(CAPACITY)
     accepted, _, accepted_output = invoke(
         tmp_path, accepted_document, name="at-limit"
     )
     assert accepted.returncode == 0
-    assert read(accepted_output)["capacity_per_min"] == CAPACITY
+    assert read(accepted_output)["capacity_regimes"]["switch_minute"] == SWITCH
 
 
 def test_capacity_ceiling_lower_bound_is_not_bad_input(tmp_path):
     """题面：「`capacity_ceiling` 是 1 到 1000000000 的整数」。"""
     payload = rendered_case()
-    payload["capacity_ceiling"] = 1
+    payload["capacity_ceiling"] = [1, 1]
     result, _, output = invoke(tmp_path, payload)
     assert result.returncode == 1
     assert result.stderr == "运行拒收: NO_CAPACITY\n" and not output.exists()
@@ -253,7 +299,7 @@ def test_capacity_ceiling_lower_bound_is_not_bad_input(tmp_path):
 def test_capacity_ceiling_below_limit_is_refused(tmp_path):
     """题面：「当前 `capacity_ceiling` 内找不到完整全局配对时」。"""
     rejected_document = rendered_case(capacity=CAPACITY)
-    rejected_document["capacity_ceiling"] = CAPACITY - 1
+    rejected_document["capacity_ceiling"] = [CAPACITY[0], CAPACITY[1] - 1]
     rejected, _, rejected_output = invoke(
         tmp_path, rejected_document, name="below-limit"
     )
@@ -262,7 +308,7 @@ def test_capacity_ceiling_below_limit_is_refused(tmp_path):
 
 
 def test_top_level_keys_are_exact(tmp_path):
-    """题面：「对账文件采用 UTF-8 编码的单层 JSON 对象；顶层四个键必须不多不少」。"""
+    """题面：「顶层四个键必须不多不少：」"""
     payload = rendered_case()
     payload["operator"] = "night"
     result, _, output = invoke(tmp_path, payload)
@@ -271,9 +317,23 @@ def test_top_level_keys_are_exact(tmp_path):
 
 
 def test_profile_keys_are_exact(tmp_path):
-    """题面：「`profiles` 有 2 到 8 项，描述没有排队日志的到诊曲线。每项只含：」"""
+    """题面：「`profiles` 恰好有 2 项，描述没有排队日志的到诊曲线。每项只含：」"""
     payload = rendered_case()
     payload["profiles"][0]["clinic"] = "west"
+    result, _, output = invoke(tmp_path, payload)
+    assert result.returncode == 1
+    assert result.stderr == "运行拒收: BAD_INPUT\n" and not output.exists()
+
+
+def test_profile_count_is_exact(tmp_path):
+    """题面：「`profiles` 恰好有 2 项，描述没有排队日志的到诊曲线。」"""
+    payload = rendered_case()
+    payload["profiles"].pop()
+    result, _, output = invoke(tmp_path, payload)
+    assert result.returncode == 1
+    assert result.stderr == "运行拒收: BAD_INPUT\n" and not output.exists()
+    payload = rendered_case()
+    payload["profiles"].pop()
     result, _, output = invoke(tmp_path, payload)
     assert result.returncode == 1
     assert result.stderr == "运行拒收: BAD_INPUT\n" and not output.exists()
@@ -310,13 +370,38 @@ def test_duplicate_json_key_is_refused(tmp_path):
     assert result.stderr == "运行拒收: BAD_INPUT\n" and not output.exists()
 
 
-def test_profiles_and_batches_must_have_equal_lengths(tmp_path):
-    """题面：「`batches` 与 `profiles` 等长」。"""
+def test_batches_must_include_two_decoys(tmp_path):
+    """题面：「`batches` 恰好比 `profiles` 多两条」。"""
     payload = rendered_case()
     payload["batches"].pop()
     result, _, output = invoke(tmp_path, payload)
     assert result.returncode == 1
     assert result.stderr == "运行拒收: BAD_INPUT\n" and not output.exists()
+    payload = rendered_case()
+    payload["batches"].append(dict(payload["batches"][-1]))
+    payload["batches"][-1]["batch_id"] = "B-902"
+    result, _, output = invoke(tmp_path, payload)
+    assert result.returncode == 1
+    assert result.stderr == "运行拒收: BAD_INPUT\n" and not output.exists()
+
+
+def test_official_log_subset_is_selected(tmp_path):
+    """题面：「四份日志里只有两份来自当日正式站点，另外两份是测试台留下的相似波形。」"""
+    result, _, output = invoke(tmp_path, rendered_case())
+    document = read(output)
+    assert result.returncode == 0
+    assert [item["batch_id"] for item in document["assignments"]] == ["B-731", "B-204"]
+
+
+def test_official_logs_and_sites_are_jointly_assigned(tmp_path):
+    """题面：「正式日志的选择和站点配对要由整批观测一次确定。」"""
+    result, _, output = invoke(tmp_path, rendered_case())
+    document = read(output)
+    assert result.returncode == 0
+    assert {
+        (item["profile_id"], item["batch_id"])
+        for item in document["assignments"]
+    } == {("WEST-17", "B-204"), ("EAST-04", "B-731")}
 
 
 def test_duplicate_profile_identifier_is_refused(tmp_path):
@@ -329,12 +414,39 @@ def test_duplicate_profile_identifier_is_refused(tmp_path):
 
 
 def test_too_short_arrival_series_is_refused(tmp_path):
-    """题面：「到诊曲线的长度必须落在十二至一百二十个分钟之间」。"""
+    """题面：「到诊曲线的长度是十二至三十二个分钟」。"""
     payload = rendered_case()
     payload["profiles"][0]["arrivals_per_min"] = [1] * 11
     result, _, output = invoke(tmp_path, payload)
     assert result.returncode == 1
     assert result.stderr == "运行拒收: BAD_INPUT\n" and not output.exists()
+
+
+def test_mixed_profile_lengths_use_each_profile_own_bound(tmp_path):
+    """题面：「到诊曲线的长度是十二至三十二个分钟」。"""
+    short = [24, 21, 23, 22, 25, 24, 22, 23, 21, 25, 24, 22]
+    long = [25, 21, 24, 23, 22, 25, 21, 24, 22, 23, 25, 21, 24, 22, 23, 21, 24]
+    result, _, output = invoke(
+        tmp_path,
+        rendered_case(
+            profiles=[("LONG-2", long), ("SHORT-1", short)],
+            initials=[210, 260],
+            order=[0, 1],
+            samples_by_profile=[
+                [2, 9, 14],
+                [2, 5, 11],
+            ],
+        ),
+    )
+    assert result.returncode == 0, result.stderr
+    document = read(output)
+    assert len(assignment(document, "SHORT-1")["backlog_series"]) == 12
+    assert len(assignment(document, "LONG-2")["backlog_series"]) == 17
+    assert document["capacity_regimes"] == {
+        "early": CAPACITY[0],
+        "late": CAPACITY[1],
+        "switch_minute": SWITCH,
+    }
 
 
 def test_boolean_arrival_is_refused(tmp_path):
@@ -356,7 +468,7 @@ def test_sampled_minutes_must_be_strictly_increasing(tmp_path):
 
 
 def test_sampled_minutes_count_and_range_are_strict(tmp_path):
-    """题面：「快照分钟从曲线中挑出二至六个位置。每个位置不低于 1，也不超过该站曲线长度。」"""
+    """题面：「快照分钟从曲线中挑出二至三个位置。每个位置不低于 1，也不超过该站曲线长度。」"""
     too_few = rendered_case()
     too_few["batches"][0]["sampled_minutes"] = [2]
     too_few["batches"][0]["checkpoint_backlogs"] = [too_few["batches"][0]["checkpoint_backlogs"][0]]
@@ -364,8 +476,14 @@ def test_sampled_minutes_count_and_range_are_strict(tmp_path):
     assert result.returncode == 1
     assert result.stderr == "运行拒收: BAD_INPUT\n" and not output.exists()
     outside = rendered_case()
-    outside["batches"][0]["sampled_minutes"][-1] = 13
+    outside["batches"][0]["sampled_minutes"][-1] = 65
     result, _, output = invoke(tmp_path, outside)
+    assert result.returncode == 1
+    assert result.stderr == "运行拒收: BAD_INPUT\n" and not output.exists()
+    too_many = rendered_case()
+    too_many["batches"][0]["sampled_minutes"] = [2, 3, 4, 5, 6]
+    too_many["batches"][0]["checkpoint_backlogs"] = [12, 13, 14, 15, 16]
+    result, _, output = invoke(tmp_path, too_many)
     assert result.returncode == 1
     assert result.stderr == "运行拒收: BAD_INPUT\n" and not output.exists()
 
@@ -380,7 +498,7 @@ def test_nonpositive_checkpoint_backlog_is_refused(tmp_path):
 
 
 def test_ambiguous_pairing_is_refused(tmp_path):
-    """题面：「最小可行能力下存在两种完整配对，按 `BAD_MODEL` 退出。」"""
+    """题面：「若最小可行三元组下存在两种完整配对，按 `BAD_MODEL` 退出。」"""
     arrivals = [3, 7, 5, 11, 9, 4, 13, 6, 8, 12, 4, 3]
     payload = rendered_case(
         profiles=[("ALPHA-1", arrivals), ("BETA-2", arrivals)],
@@ -401,7 +519,7 @@ def test_result_has_compact_fixed_order(tmp_path):
     assert list(document) == [
         "system_id",
         "status",
-        "capacity_per_min",
+        "capacity_regimes",
         "assignments",
     ]
     assert b": " not in raw and raw.endswith(b"\n") and raw.count(b"\n") == 1
@@ -504,6 +622,13 @@ def test_publish_failure_leaves_no_temporary(tmp_path):
     assert not list(directory.glob(".queue-*"))
 
 
+def test_publish_success_leaves_no_temporary(tmp_path):
+    """题面：「发布结束不得留下草稿。」"""
+    result, _, output = invoke(tmp_path, rendered_case())
+    assert result.returncode == 0 and output.is_file()
+    assert not list(tmp_path.glob(".queue-*"))
+
+
 def test_repeat_run_is_byte_identical(tmp_path):
     """题面：「使用同一份对账材料再次标定，报告应当逐字节不变。」"""
     result, source, output = invoke(tmp_path, rendered_case())
@@ -514,27 +639,31 @@ def test_repeat_run_is_byte_identical(tmp_path):
 
 
 def test_maximum_shape_runs_without_capacity_scan(tmp_path):
-    """题面：「`profiles` 有 2 到 8 项」「到诊曲线的长度必须落在十二至一百二十个分钟之间」。"""
+    """题面：「`profiles` 恰好有 2 项」「到诊曲线的长度是十二至三十二个分钟」。"""
     profiles = []
     initials = []
-    for index in range(8):
+    for index in range(2):
         profiles.append(
             (
                 f"SITE-{index:02d}",
-                [(index * 17 + minute * 7) % 23 + 3 for minute in range(120)],
+                [(index * 17 + minute * 7) % 23 + 3 for minute in range(32)],
             )
         )
         initials.append(50000 + index * 111)
     payload = rendered_case(
         profiles=profiles,
         initials=initials,
-        order=[7, 2, 5, 0, 6, 3, 1, 4],
-        capacity=53,
-        samples=[15, 35, 55, 75, 95, 115],
+        order=[1, 0],
+        capacity=(53, 61),
+        samples=[2, 5, 11],
     )
-    payload["capacity_ceiling"] = 1_000_000_000
+    payload["capacity_ceiling"] = [1_000_000_000, 1_000_000_000]
     started = time.monotonic()
     result, _, output = invoke(tmp_path, payload, timeout=25)
     elapsed = time.monotonic() - started
-    assert result.returncode == 0 and read(output)["capacity_per_min"] == 53
+    assert result.returncode == 0 and read(output)["capacity_regimes"] == {
+        "early": 53,
+        "late": 61,
+        "switch_minute": SWITCH,
+    }
     assert elapsed < 20

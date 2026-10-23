@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import stat
@@ -53,13 +54,18 @@ def validate(payload):
         raise Refusal("BAD_INPUT")
     system_id = payload["system_id"]
     ceiling = payload["capacity_ceiling"]
-    if not label(system_id) or not integer(ceiling, 1, 1_000_000_000):
+    if (
+        not label(system_id)
+        or not isinstance(ceiling, list)
+        or len(ceiling) != 2
+        or any(not integer(value, 1, 1_000_000_000) for value in ceiling)
+    ):
         raise Refusal("BAD_INPUT")
     profiles = payload["profiles"]
     batches = payload["batches"]
-    if not isinstance(profiles, list) or not 2 <= len(profiles) <= 8:
+    if not isinstance(profiles, list) or len(profiles) != 2:
         raise Refusal("BAD_INPUT")
-    if not isinstance(batches, list) or len(batches) != len(profiles):
+    if not isinstance(batches, list) or len(batches) != len(profiles) + 2:
         raise Refusal("BAD_INPUT")
 
     profile_ids = set()
@@ -72,7 +78,7 @@ def validate(payload):
         if not label(identifier) or identifier in profile_ids:
             raise Refusal("BAD_INPUT")
         profile_ids.add(identifier)
-        if not isinstance(arrivals, list) or not 12 <= len(arrivals) <= 120:
+        if not isinstance(arrivals, list) or not 12 <= len(arrivals) <= 32:
             raise Refusal("BAD_INPUT")
         if any(not integer(value, 0, 1_000_000) for value in arrivals):
             raise Refusal("BAD_INPUT")
@@ -92,11 +98,11 @@ def validate(payload):
         if not label(identifier) or identifier in batch_ids:
             raise Refusal("BAD_INPUT")
         batch_ids.add(identifier)
-        if not isinstance(minutes, list) or not 2 <= len(minutes) <= 6:
+        if not isinstance(minutes, list) or not 2 <= len(minutes) <= 3:
             raise Refusal("BAD_INPUT")
         previous = 0
         for minute in minutes:
-            if not integer(minute, 1, len(arrivals)) or minute <= previous:
+            if not integer(minute, 1, 32) or minute <= previous:
                 raise Refusal("BAD_INPUT")
             previous = minute
         if not isinstance(backlogs, list) or len(backlogs) != len(minutes):
@@ -113,39 +119,80 @@ def validate(payload):
                 "closing_backlog": closing,
             }
         )
-    return system_id, ceiling, clean_profiles, clean_batches
+    return system_id, tuple(ceiling), clean_profiles, clean_batches
 
 
-def simulate(initial, arrivals, capacity):
+def capacity_at(minute, capacities, switch_minute):
+    return capacities[0] if minute < switch_minute else capacities[1]
+
+
+def service_prefix(capacities, switch_minute, minute):
+    early_minutes = min(minute, switch_minute - 1)
+    late_minutes = max(0, minute - early_minutes)
+    return early_minutes * capacities[0] + late_minutes * capacities[1]
+
+
+def simulate(initial, arrivals, capacities, switch_minute):
     backlog = initial
     series = []
-    for arrival in arrivals:
-        backlog = max(0, backlog + arrival - capacity)
+    for minute, arrival in enumerate(arrivals, 1):
+        backlog = max(
+            0,
+            backlog + arrival - capacity_at(minute, capacities, switch_minute),
+        )
         series.append(backlog)
     return series
 
 
-def solution_for(profile, batch, capacity):
+def minimum_initial(arrivals, capacities, switch_minute, first_minute, target):
+    intervals = [(target, target)]
+    for minute in range(first_minute, 0, -1):
+        delta = (
+            arrivals[minute - 1]
+            - capacity_at(minute, capacities, switch_minute)
+        )
+        previous = []
+        for low, high in intervals:
+            positive_low = max(1, low)
+            if positive_low <= high:
+                predecessor_low = max(0, positive_low - delta)
+                predecessor_high = high - delta
+                if predecessor_high >= predecessor_low:
+                    previous.append((predecessor_low, predecessor_high))
+            if low <= 0 <= high and -delta >= 0:
+                previous.append((0, -delta))
+        if not previous:
+            return None
+        previous.sort()
+        merged = []
+        for low, high in previous:
+            if merged and low <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], high))
+            else:
+                merged.append((low, high))
+        intervals = merged
+    return intervals[0][0]
+
+
+def solution_for(profile, batch, capacities, switch_minute):
     arrivals = profile["arrivals_per_min"]
     minutes = batch["sampled_minutes"]
     observed = batch["checkpoint_backlogs"]
-    candidates = set()
-    prefixes = []
-    running = 0
-    for arrival in arrivals:
-        prefixes.append(running)
-        running += arrival
-    prefixes.append(running)
-    for minute in minutes:
-        for backlog in observed:
-            candidates.add(backlog - prefixes[minute] + minute * capacity)
     matches = []
-    for initial in sorted(value for value in candidates if 0 <= value <= 1_000_000_000):
-        series = simulate(initial, arrivals, capacity)
+    for assignment in sorted(set(itertools.permutations(observed))):
+        initial = minimum_initial(
+            arrivals,
+            capacities,
+            switch_minute,
+            minutes[0],
+            assignment[0],
+        )
+        if initial is None:
+            continue
+        series = simulate(initial, arrivals, capacities, switch_minute)
         if series[-1] != batch["closing_backlog"]:
             continue
-        sampled = [series[minute - 1] for minute in minutes]
-        if sorted(sampled) != sorted(observed):
+        if [series[minute - 1] for minute in minutes] != list(assignment):
             continue
         pairs = [
             {"minute": minute, "backlog": series[minute - 1]}
@@ -155,67 +202,116 @@ def solution_for(profile, batch, capacity):
     return matches[0] if matches else None
 
 
+def equation_capacities(equations, ceiling):
+    partial = set()
+    for first_index, (a, b, rhs) in enumerate(equations):
+        if a == 0 and b and rhs % b == 0:
+            late = rhs // b
+            if 1 <= late <= ceiling[1]:
+                partial.add((None, late))
+        if b == 0 and a and rhs % a == 0:
+            early = rhs // a
+            if 1 <= early <= ceiling[0]:
+                partial.add((early, None))
+        for c, d, other_rhs in equations[first_index + 1 :]:
+            determinant = a * d - b * c
+            if determinant == 0:
+                continue
+            early_numerator = rhs * d - b * other_rhs
+            late_numerator = a * other_rhs - rhs * c
+            if early_numerator % determinant or late_numerator % determinant:
+                continue
+            early = early_numerator // determinant
+            late = late_numerator // determinant
+            if 1 <= early <= ceiling[0] and 1 <= late <= ceiling[1]:
+                partial.add((early, late))
+    completed = set()
+    for early, late in partial:
+        if early is not None and late is not None:
+            completed.add((early, late))
+            continue
+        for a, b, rhs in equations:
+            if early is None and a and not b:
+                if rhs % a == 0:
+                    candidate = rhs // a
+                    if 1 <= candidate <= ceiling[0]:
+                        completed.add((candidate, late))
+            if late is None and b and not a:
+                if rhs % b == 0:
+                    candidate = rhs // b
+                    if 1 <= candidate <= ceiling[1]:
+                        completed.add((early, candidate))
+    return {
+        (early, late)
+        for early, late in completed
+        if all(a * early + b * late == rhs for a, b, rhs in equations)
+    }
+
+
 def candidates_for_pair(profile, batch, ceiling):
     arrivals = profile["arrivals_per_min"]
     minutes = batch["sampled_minutes"]
     observed = batch["checkpoint_backlogs"]
-    capacity_candidates = set()
-    for left_index, left_minute in enumerate(minutes):
-        for right_minute in minutes[left_index + 1 :]:
-            span = right_minute - left_minute
-            arrival_gap = sum(arrivals[left_minute:right_minute])
-            for left_value in observed:
-                for right_value in observed:
-                    numerator = arrival_gap - (right_value - left_value)
-                    if numerator > 0 and numerator % span == 0:
-                        capacity = numerator // span
-                        if capacity <= ceiling:
-                            capacity_candidates.add(capacity)
     length = len(arrivals)
     closing = batch["closing_backlog"]
-    for minute in minutes:
-        span = length - minute
-        if span <= 0:
-            continue
-        arrival_gap = sum(arrivals[minute:])
-        for value in observed:
-            numerator = arrival_gap - (closing - value)
-            if numerator > 0 and numerator % span == 0:
-                capacity = numerator // span
-                if capacity <= ceiling:
-                    capacity_candidates.add(capacity)
-    return capacity_candidates
+    if minutes[-1] > length:
+        return set()
+    prefixes = [0]
+    for arrival in arrivals:
+        prefixes.append(prefixes[-1] + arrival)
+    triples = set()
+    for switch_minute in range(1, length + 1):
+        for assignment in set(itertools.permutations(observed)):
+            by_minute = dict(zip(minutes, assignment))
+            equations = []
+            for left, right in zip(minutes, minutes[1:]):
+                span = right - left
+                early = max(0, min(right, switch_minute - 1) - left)
+                late = span - early
+                required = (
+                    prefixes[right] - prefixes[left]
+                    - (by_minute[right] - by_minute[left])
+                )
+                equations.append((early, late, required))
+            last = minutes[-1]
+            early = max(0, min(length, switch_minute - 1) - last)
+            late = length - last - early
+            required = (
+                prefixes[length]
+                - prefixes[last]
+                + by_minute[last]
+                - closing
+            )
+            equations.append((early, late, required))
+            for early_capacity, late_capacity in equation_capacities(
+                equations,
+                ceiling,
+            ):
+                triples.add(
+                    (early_capacity, late_capacity, switch_minute)
+                )
+    return triples
 
 
-def unique_matching(adjacency):
-    count = len(adjacency)
-    ways = [0] * (1 << count)
-    choice = [None] * (1 << count)
-    predecessor = [None] * (1 << count)
-    ways[0] = 1
-    for mask in range(1 << count):
-        row = mask.bit_count()
-        if ways[mask] == 0 or row == count:
-            continue
-        for batch_index in adjacency[row]:
-            bit = 1 << batch_index
-            if mask & bit:
+def unique_assignment(adjacency):
+    """Count injective assignments to distinct batches, stopping at two."""
+    results = []
+
+    def search(row, used, chosen):
+        if len(results) >= 2:
+            return
+        if row == len(adjacency):
+            results.append(tuple(chosen))
+            return
+        for batch_index in sorted(adjacency[row]):
+            if batch_index in used:
                 continue
-            target = mask | bit
-            ways[target] = min(2, ways[target] + ways[mask])
-            if choice[target] is None:
-                choice[target] = batch_index
-                predecessor[target] = mask
-    full = (1 << count) - 1
-    if ways[full] != 1:
-        return ways[full], None
-    matching = [0] * count
-    mask = full
-    for row in range(count - 1, -1, -1):
-        chosen = choice[mask]
-        matching[row] = chosen
-        mask = predecessor[mask]
-    return 1, matching
+            chosen.append(batch_index)
+            search(row + 1, used | {batch_index}, chosen)
+            chosen.pop()
+
+    search(0, set(), [])
+    return len(results), results[0] if len(results) == 1 else None
 
 
 def calibrate(system_id, ceiling, profiles, batches):
@@ -228,20 +324,32 @@ def calibrate(system_id, ceiling, profiles, batches):
         for batch_index, batch in enumerate(batches):
             pair_capacities = candidates_for_pair(profile, batch, ceiling)
             capacities.update(pair_capacities)
-            for capacity in pair_capacities:
-                solution = solution_for(profile, batch, capacity)
+            for capacities_for_pair in pair_capacities:
+                early, late, switch_minute = capacities_for_pair
+                solution = solution_for(
+                    profile,
+                    batch,
+                    (early, late),
+                    switch_minute,
+                )
                 if solution is not None:
-                    candidate_solutions[(profile_index, batch_index, capacity)] = solution
+                    candidate_solutions[
+                        (profile_index, batch_index, capacities_for_pair)
+                    ] = solution
 
-    for capacity in sorted(capacities):
+    for capacities_for_pair in sorted(capacities):
         adjacency = []
         for profile_index in range(len(ordered_profiles)):
             row = []
             for batch_index in range(len(batches)):
-                if (profile_index, batch_index, capacity) in candidate_solutions:
+                if (
+                    profile_index,
+                    batch_index,
+                    capacities_for_pair,
+                ) in candidate_solutions:
                     row.append(batch_index)
             adjacency.append(row)
-        count, matching = unique_matching(adjacency)
+        count, matching = unique_assignment(adjacency)
         if count > 1:
             raise Refusal("BAD_MODEL")
         if matching is None:
@@ -250,7 +358,7 @@ def calibrate(system_id, ceiling, profiles, batches):
         for profile_index, profile in enumerate(ordered_profiles):
             batch_index = matching[profile_index]
             initial, pairs, series = candidate_solutions[
-                (profile_index, batch_index, capacity)
+                (profile_index, batch_index, capacities_for_pair)
             ]
             assignments.append(
                 {
@@ -266,7 +374,11 @@ def calibrate(system_id, ceiling, profiles, batches):
         return {
             "system_id": system_id,
             "status": "calibrated",
-            "capacity_per_min": capacity,
+            "capacity_regimes": {
+                "early": capacities_for_pair[0],
+                "late": capacities_for_pair[1],
+                "switch_minute": capacities_for_pair[2],
+            },
             "assignments": assignments,
         }
     raise Refusal("NO_CAPACITY")
